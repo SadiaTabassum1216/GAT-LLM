@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from transformers.models.gpt2.modeling_gpt2 import GPT2Model
+from transformers import GPT2Model
 
 class TemporalEmbedding(nn.Module):
     def __init__(self, time, features):
@@ -16,33 +16,36 @@ class TemporalEmbedding(nn.Module):
 
     def forward(self, x):
         day_emb = x[..., 1]
-        time_day = self.time_day[
-            (day_emb[:, -1, :] * self.time).type(torch.LongTensor)
-        ]
+        day_idx = (day_emb[:, -1, :] * self.time).long().clamp(0, self.time - 1)
+        time_day = self.time_day[day_idx]
         time_day = time_day.transpose(1, 2).unsqueeze(-1)
 
         week_emb = x[..., 2]
-        time_week = self.time_week[
-            (week_emb[:, -1, :]).type(torch.LongTensor)
-        ]
+        week_idx = (week_emb[:, -1, :]).long().clamp(0, 6)
+        time_week = self.time_week[week_idx]
         time_week = time_week.transpose(1, 2).unsqueeze(-1)
 
-        # temporal embeddings
         tem_emb = time_day + time_week
         return tem_emb
 
+
 class PFA(nn.Module):
-    def __init__(self, device="cuda:0", gpt_layers=6, U=1):
+    def __init__(self, device="cpu", gpt_layers=6, U=1):        
         super(PFA, self).__init__()
+        
         self.gpt2 = GPT2Model.from_pretrained(
             "gpt2", output_attentions=True, output_hidden_states=True
         )
+        # gpt_layers = int(gpt_layers)
         self.gpt2.h = self.gpt2.h[:gpt_layers]
+        self.device = torch.device(device)
         self.U = U
+        # self.device = device        
+
 
         for layer_index, layer in enumerate(self.gpt2.h):
             for name, param in layer.named_parameters():
-                if layer_index < gpt_layers - self.U:
+                if int(layer_index) < int(gpt_layers) - int(self.U):
                     if "ln" in name or "wpe" in name:
                         param.requires_grad = True
                     else:
@@ -66,7 +69,7 @@ class ST_LLM(nn.Module):
         output_len=12,
         llm_layer=6,
         U=1,
-        device= "cuda:7"
+        device="cpu",
     ):
         super().__init__()
 
@@ -83,14 +86,18 @@ class ST_LLM(nn.Module):
             time = 288
         elif num_nodes == 250 or num_nodes == 266:
             time = 48
+        else:
+            time = 288
 
         gpt_channel = 256
         to_gpt_channel = 768
 
         self.Temb = TemporalEmbedding(time, gpt_channel)
 
+        # Node embedding
         self.node_emb = nn.Parameter(torch.empty(self.num_nodes, gpt_channel))
         nn.init.xavier_uniform_(self.node_emb)
+        print(f"node_emb: {self.node_emb.shape}")  # Should be [num_nodes, gpt_channel]
 
         self.start_conv = nn.Conv2d(
             self.input_dim * self.input_len, gpt_channel, kernel_size=(1, 1)
@@ -113,35 +120,38 @@ class ST_LLM(nn.Module):
         return sum([param.nelement() for param in self.parameters()])
 
     def forward(self, history_data):
-        input_data = history_data
-        batch_size, _, num_nodes, _ = input_data.shape
-        history_data = history_data.permute(0, 3, 2, 1)
+        batch_size, input_dim, num_nodes, input_len = history_data.shape
 
-        tem_emb = self.Temb(history_data)
-        node_emb = []
-        node_emb.append(
-            self.node_emb.unsqueeze(0)
-            .expand(batch_size, -1, -1)
-            .transpose(1, 2)
-            .unsqueeze(-1)
-        )
+        # 1. Get temporal embeddings from original layout: [B, C=3, N, T]
+        tem_emb = self.Temb(history_data)  # [B, gpt_channel, num_nodes, 1]
 
-        input_data = input_data.transpose(1, 2).contiguous()
-        input_data = (
-            input_data.view(batch_size, num_nodes, -1).transpose(1, 2).unsqueeze(-1)
-        )
-        input_data = self.start_conv(input_data)
+        # 2. Get node embeddings (Fix shape: [gpt_channel, num_nodes])
+        node_emb = self.node_emb.T.unsqueeze(0).expand(batch_size, -1, -1).unsqueeze(-1)
+        # [B, gpt_channel, num_nodes, 1]
 
-        data_st = torch.cat(
-            [input_data] + [tem_emb] + node_emb, dim=1
-        )
-        data_st = self.feature_fusion(data_st)
-        # data_st = F.leaky_relu(data_st)
+        # 3. Prepare input_data for start_conv
+        # Rearrange from [B, C, N, T] to [B, N, C*T] -> [B, C*T, N, 1]
+        input_data = history_data.permute(0, 2, 1, 3).contiguous()
+        input_data = input_data.view(batch_size, num_nodes, -1).transpose(1, 2).unsqueeze(-1)
+        input_data = self.start_conv(input_data)  # [B, gpt_channel, num_nodes, 1]
 
-        data_st = data_st.permute(0, 2, 1, 3).squeeze(-1)
-        data_st = self.gpt(data_st)
+        # 4. Sanity shape check
+        assert (
+            input_data.shape[2] == tem_emb.shape[2] == node_emb.shape[2]
+        ), f"Mismatch in num_nodes dimension: input_data={input_data.shape}, tem_emb={tem_emb.shape}, node_emb={node_emb.shape}"
+
+        # 5. Concatenate feature maps: [B, 3 * gpt_channel, N, 1]
+        data_st = torch.cat([input_data, tem_emb, node_emb], dim=1)
+        data_st = self.feature_fusion(data_st)  # [B, 768, N, 1]
+
+        # 6. Pass through GPT
+        data_st = data_st.permute(0, 2, 1, 3).squeeze(-1)  # [B, N, 768]
+        data_st = self.gpt(data_st)  # [B, N, 768]
+
+        # 7. Back to conv format: [B, 768, N, 1]
         data_st = data_st.permute(0, 2, 1).unsqueeze(-1)
 
+        # 8. Predict output sequence: [B, output_len, N, 1]
         prediction = self.regression_layer(data_st)
 
         return prediction

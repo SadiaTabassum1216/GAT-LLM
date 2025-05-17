@@ -42,7 +42,7 @@ class TemporalEmbedding(nn.Module):
 
 class GPT4TS(nn.Module):
     
-    def __init__(self, device = "cuda:0", gpt_layers = 3):
+    def __init__(self, device = "cpu", gpt_layers = 3):
         super(GPT4TS, self).__init__()
         config = GPT2Config(
             n_embd=768,
