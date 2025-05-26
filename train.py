@@ -10,6 +10,7 @@ import random
 from model_ST_LLM import ST_LLM
 from ranger21 import Ranger
 from tqdm import tqdm
+import pickle
 
 os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:21'
 
@@ -34,7 +35,7 @@ parser.add_argument("--resume", type=str, default="", help="Path to checkpoint")
 args = parser.parse_args()
 
 class trainer:
-    def __init__(self, scaler, lrate, wdecay, input_dim, num_nodes, input_len, output_len, llm_layer, U, device):
+    def __init__(self, scaler, lrate, wdecay, input_dim, num_nodes, input_len, output_len, llm_layer, U, device, adj):
         self.model = ST_LLM(
             input_dim=input_dim,
             channels=64,
@@ -50,13 +51,15 @@ class trainer:
         self.loss = util.MAE_torch
         self.scaler = scaler
         self.clip = 5
+        self.adj = adj
         print("The number of parameters: {}".format(self.model.param_num()))
+        print("node_emb shape at init:", self.model.node_emb.shape)
         print(self.model)
 
     def train(self, input, real_val):
         self.model.train()
         self.optimizer.zero_grad()
-        output = self.model(input)
+        output = self.model(input, self.adj)
         output = output.transpose(1, 3)
         real = torch.unsqueeze(real_val, dim=1)
         predict = self.scaler.inverse_transform(output)
@@ -72,7 +75,7 @@ class trainer:
 
     def eval(self, input, real_val):
         self.model.eval()
-        output = self.model(input)
+        output = self.model(input, self.adj)
         output = output.transpose(1, 3)
         real = torch.unsqueeze(real_val, dim=1)
         predict = self.scaler.inverse_transform(output)
@@ -92,12 +95,26 @@ def seed_it(seed):
     torch.backends.cudnn.enabled = True  
     torch.manual_seed(seed)
 
+def normalize_adj(adj):
+    degree = torch.sum(adj, dim=1)
+    d_inv_sqrt = torch.pow(degree, -0.5)
+    d_inv_sqrt[torch.isinf(d_inv_sqrt)] = 0.
+    D_inv_sqrt = torch.diag(d_inv_sqrt)
+    return torch.mm(torch.mm(D_inv_sqrt, adj), D_inv_sqrt)
+
 def main():
     seed_it(6666)
     data = args.data
+    adj_path = os.path.join("data", args.data, args.data, "adj_mx.pkl")
+
+    with open(adj_path, "rb") as f:
+        adj_mx = pickle.load(f)
+
+    adj = torch.tensor(adj_mx, dtype=torch.float32)
+    adj = normalize_adj(adj)
 
     if args.data == "bike_drop":
-        args.data = "data//bike_drop//" + args.data
+        args.data = "data/bike_drop/" + args.data
         args.num_nodes = 250
     elif args.data == "bike_pick":
         args.data = "data//bike_pick//" + args.data
@@ -117,18 +134,29 @@ def main():
     if not os.path.exists(path):
         os.makedirs(path)
 
-    engine = trainer(scaler, args.lrate, args.wdecay, args.input_dim, args.num_nodes, args.input_len, args.output_len, args.llm_layer, args.U, args.device)
+    engine = trainer(scaler, args.lrate, args.wdecay, args.input_dim, args.num_nodes, args.input_len, args.output_len, args.llm_layer, args.U, device, adj)
 
-    if args.resume and os.path.exists(args.resume):
-        print(f"Resuming from checkpoint: {args.resume}")
-        engine.model.load_state_dict(torch.load(args.resume))
-
-    print("start training...", flush=True)
     best_loss = float('inf')
     best_epoch = 0
     epochs_since_best = 0
+    start_epoch = 1
 
-    for i in range(1, args.epochs + 1):
+    if args.resume and os.path.exists(args.resume):
+        print(f"Resuming from checkpoint: {args.resume}")
+        checkpoint = torch.load(args.resume, map_location=device)
+        if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+            engine.model.load_state_dict(checkpoint['model_state_dict'])
+            engine.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            start_epoch = checkpoint['epoch'] + 1
+            best_loss = checkpoint['best_loss']
+            print(f"Resumed from epoch {checkpoint['epoch']} with best loss {best_loss:.4f}")
+        else:
+            engine.model.load_state_dict(checkpoint)
+            print("Loaded model weights only (no optimizer or epoch info).")
+
+    print("start training...", flush=True)
+
+    for i in range(start_epoch, args.epochs + 1):
         train_loss, train_mape, train_rmse, train_wmape = [], [], [], []
         t1 = time.time()
 
@@ -141,37 +169,49 @@ def main():
             train_rmse.append(metrics[2])
             train_wmape.append(metrics[3])
             if iter % args.print_every == 0:
-                print(f"  Iter {iter:03d} | Loss: {metrics[0]:.4f}, RMSE: {metrics[2]:.4f}, MAPE: {metrics[1]:.4f}, WMAPE: {metrics[3]:.4f}")
+                print(f"\n  Iter {iter:03d} | Loss: {metrics[0]:.4f}, RMSE: {metrics[2]:.4f}, MAPE: {metrics[1]:.4f}, WMAPE: {metrics[3]:.4f}")
 
         t2 = time.time()
         avg_loss = np.mean(train_loss)
-        print(f"Epoch {i:03d} completed in {t2 - t1:.2f} seconds. Avg Loss: {avg_loss:.4f}\n")
+        print(f"Epoch {i:03d} completed in {t2 - t1:.2f} seconds. Avg Loss: {avg_loss:.4f}")
 
-        # Save best model
         if avg_loss < best_loss:
             best_loss = avg_loss
             best_epoch = i
             epochs_since_best = 0
             checkpoint_path = os.path.join(path, f"best_model.pth")
-            torch.save(engine.model.state_dict(), checkpoint_path)
+            torch.save({
+                'epoch': i,
+                'model_state_dict': engine.model.state_dict(),
+                'optimizer_state_dict': engine.optimizer.state_dict(),
+                'best_loss': best_loss
+            }, checkpoint_path)
             print(f"Model saved to {checkpoint_path} at epoch {i} with loss {avg_loss:.4f}")
         else:
             epochs_since_best += 1
 
-        # Periodic checkpoints
         if i % 10 == 0:
-            torch.save(engine.model.state_dict(), os.path.join(path, f"checkpoint_epoch_{i}.pth"))
+            torch.save({
+                'epoch': i,
+                'model_state_dict': engine.model.state_dict(),
+                'optimizer_state_dict': engine.optimizer.state_dict(),
+                'best_loss': best_loss
+            }, os.path.join(path, f"checkpoint_epoch_{i}.pth"))
 
-        # Early stopping
         if epochs_since_best >= args.es_patience and i >= 200:
             print("Early stopping triggered.")
             break
 
-    print("Training complete. Best model from epoch {} with loss {:.4f}".format(best_epoch, best_loss))
+    print("\nTraining complete. Best model from epoch {} with loss {:.4f}".format(best_epoch, best_loss))
 
 if __name__ == "__main__":
     torch.cuda.empty_cache()
     t1 = time.time()
     main()
     t2 = time.time()
-    print("Total time spent: {:.4f}".format(t2 - t1))
+    # print("Total time spent: {:.4f} seconds".format(t2 - t1))
+    time_spent = t2 - t1
+    hours = int(time_spent // 3600)
+    minutes = int((time_spent % 3600) // 60)
+    seconds = int(time_spent % 60)
+    print("\nTotal time spent: {:2d} hours, {:02d} minutes, {:.4f} seconds".format(hours, minutes, seconds))

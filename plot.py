@@ -75,4 +75,4 @@ def plot_full_24h_forecast(real_path: str, pred_path: str, node_idx: int = 0, sa
     
     
 # Example usage:
-plot_full_24h_forecast("stamt_CAir_PM_real.pt", "stamt_CAir_PM_pred.pt", node_idx=0, sample_idx=0, scaler=None, interval_min=30)
+plot_full_24h_forecast("taxi_drop_real.pt", "taxi_drop_pred.pt", node_idx=0, sample_idx=0, scaler=None, interval_min=30)
