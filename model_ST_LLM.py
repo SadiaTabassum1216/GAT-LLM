@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from GCN import GraphConvolution
-from GAT import GraphAttention
+from GAT import MultiHeadGAT
 from temporal_embedding import TemporalEmbedding
 from PFA import PFA
 
@@ -47,11 +47,19 @@ class ST_LLM(nn.Module):
         # Node embedding
         self.node_emb = nn.Parameter(torch.empty(self.num_nodes, gpt_channel))
         nn.init.xavier_uniform_(self.node_emb)
-        # print(f"node_emb: {self.node_emb.shape}")  # Should be [num_nodes, gpt_channel]
+        print(f"node_emb: {self.node_emb.shape}")  # Should be [num_nodes, gpt_channel]
 
         # GCN layer for graph-aware node embeddings
         # self.gcn = GraphConvolution(gpt_channel, gpt_channel)
-        self.gat = GraphAttention(gpt_channel, gpt_channel)
+        # self.gat = GraphAttention(gpt_channel, gpt_channel)
+        self.gat = MultiHeadGAT(
+            n_heads=4,
+            in_features=gpt_channel,
+            out_features=gpt_channel // 4,  # so total output dim = gpt_channel
+            dropout=0.1,
+            alpha=0.2,
+            merge='concat'
+        )
 
         self.start_conv = nn.Conv2d(
             self.input_dim * self.input_len, gpt_channel, kernel_size=(1, 1)
@@ -75,7 +83,7 @@ class ST_LLM(nn.Module):
 
 
     def forward(self, history_data, adj):
-        batch_size, input_dim, num_nodes, input_len = history_data.shape
+        batch_size, inputdim, num_nodes, input_len = history_data.shape
 
         # 1. Get temporal embeddings from original layout: [B, C=3, N, T]
         tem_emb = self.Temb(history_data)  # [B, gpt_channel, num_nodes, 1]
