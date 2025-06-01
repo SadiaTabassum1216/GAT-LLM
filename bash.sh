@@ -7,5 +7,6 @@
 
 # python train.py --data taxi_drop > taxi_drop_train_with_gat.log
 # python test.py --data taxi_drop --checkpoint ./logs/xtaxi_drop/best_model.pth > taxi_drop_test_with_gat.log
+# python test.py --data taxi_drop --checkpoint ./logs/xPEMS07/best_model.pth > PEMS07_test_with_gat.log
 
 

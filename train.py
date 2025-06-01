@@ -17,14 +17,14 @@ os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'max_split_size_mb:21'
 parser = argparse.ArgumentParser()
 parser.add_argument("--device", type=str, default="cpu")
 parser.add_argument("--data", type=str, default="taxi_pick")
-parser.add_argument("--input_dim", type=int, default=3)
+parser.add_argument("--input_dim", type=int, default=3) # 3 for bike and taxi, 1 for PEMS07
 parser.add_argument("--num_nodes", type=int, default=250)
 parser.add_argument("--input_len", type=int, default=12)
 parser.add_argument("--output_len", type=int, default=12)
 parser.add_argument("--batch_size", type=int, default=64)
 parser.add_argument("--lrate", type=float, default=1e-3)
 parser.add_argument("--llm_layer", type=int, default=1)
-parser.add_argument("--U", type=int, default=1)
+parser.add_argument("--U", type=int, default=2)
 parser.add_argument("--epochs", type=int, default=100)
 parser.add_argument("--print_every", type=int, default=50)
 parser.add_argument("--gpt_layers", type=int, default=6)
@@ -106,6 +106,7 @@ def main():
     seed_it(6666)
     data = args.data
     adj_path = os.path.join("data", args.data, args.data, "adj_mx.pkl")
+    # adj_path = os.path.join("data", args.data, "adj_pems07.pkl")
 
     with open(adj_path, "rb") as f:
         adj_mx = pickle.load(f)
@@ -125,6 +126,9 @@ def main():
     elif args.data == "taxi_pick":
         args.data = "data//taxi_pick//" + args.data
         args.num_nodes = 266
+    elif args.data == "PEMS07":
+        args.data = "data/PEMS07/" + args.data
+        args.num_nodes = 883
 
     device = torch.device(args.device)
     dataloader = util.load_dataset(args.data, args.batch_size, args.batch_size, args.batch_size)

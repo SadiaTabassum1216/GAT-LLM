@@ -32,7 +32,7 @@ class ST_LLM(nn.Module):
         self.device = device
 
         # this is chosen according to the dataset
-        if num_nodes == 170 or num_nodes == 307:
+        if num_nodes == 170 or num_nodes == 307 or num_nodes == 883:
             time = 288
         elif num_nodes == 250 or num_nodes == 266:
             time = 48
@@ -85,41 +85,35 @@ class ST_LLM(nn.Module):
     def forward(self, history_data, adj):
         batch_size, inputdim, num_nodes, input_len = history_data.shape
 
-        # 1. Get temporal embeddings from original layout: [B, C=3, N, T]
-        tem_emb = self.Temb(history_data)  # [B, gpt_channel, num_nodes, 1]
+        # 1. Temporal embeddings
+        tem_emb = self.Temb(history_data)  # [B, gpt_channel, N, 1]
 
-        # 2. Get node embeddings (Fix shape: [gpt_channel, num_nodes])
-        # node_emb = self.gcn(self.node_emb.clone(), adj)  # Should be [num_nodes, gpt_channel]
+        # 2. Node embedding from GAT: [N, gpt_channel]
         node_emb = self.gat(self.node_emb.clone(), adj)
-        # assert node_emb.ndim == 2, f"Expected 2D node_emb, got {node_emb.shape}"      # Ensure shape is correct before reshaping
+        node_emb = node_emb.T.unsqueeze(0).repeat(batch_size, 1, 1).unsqueeze(-1)  # [B, gpt_channel, N, 1]
 
-        # Transform to [batch_size, gpt_channel, num_nodes, 1]
-        node_emb = node_emb.T.unsqueeze(0).repeat(batch_size, 1, 1).unsqueeze(-1)
-        # [B, gpt_channel, num_nodes, 1]
+        # 3. Prepare input for CNN
+        input_data = history_data.permute(0, 2, 1, 3).contiguous()  # [B, N, C, T]
+        input_data = input_data.view(batch_size, num_nodes, -1).transpose(1, 2).unsqueeze(-1)  # [B, C*T, N, 1]
+        input_data = self.start_conv(input_data)  # [B, gpt_channel, N, 1]
 
-        # 3. Prepare input_data for start_conv
-        # Rearrange from [B, C, N, T] to [B, N, C*T] -> [B, C*T, N, 1]
-        input_data = history_data.permute(0, 2, 1, 3).contiguous()
-        input_data = input_data.view(batch_size, num_nodes, -1).transpose(1, 2).unsqueeze(-1)
-        input_data = self.start_conv(input_data)  # [B, gpt_channel, num_nodes, 1]
-
-        # 4. Sanity shape check
+        # 4. Assert same shape
         assert (
             input_data.shape[2] == tem_emb.shape[2] == node_emb.shape[2]
         ), f"Mismatch in num_nodes dimension: input_data={input_data.shape}, tem_emb={tem_emb.shape}, node_emb={node_emb.shape}"
 
-        # 5. Concatenate feature maps: [B, 3 * gpt_channel, N, 1]
-        data_st = torch.cat([input_data, tem_emb, node_emb], dim=1)
+        # 5. Fusion
+        data_st = torch.cat([input_data, tem_emb, node_emb], dim=1)  # [B, 3*gpt_channel, N, 1]
         data_st = self.feature_fusion(data_st)  # [B, 768, N, 1]
 
-        # 6. Pass through GPT
-        data_st = data_st.permute(0, 2, 1, 3).squeeze(-1)  # [B, N, 768]
+        # 6. GPT: [B, 768, N, 1] → [B, N, 768]
+        data_st = data_st.permute(0, 2, 1, 3).squeeze(-1)
         data_st = self.gpt(data_st)  # [B, N, 768]
 
-        # 7. Back to conv format: [B, 768, N, 1]
-        data_st = data_st.permute(0, 2, 1).unsqueeze(-1)
+        # 7. Back to conv
+        data_st = data_st.permute(0, 2, 1).unsqueeze(-1)  # [B, 768, N, 1]
 
-        # 8. Predict output sequence: [B, output_len, N, 1]
-        prediction = self.regression_layer(data_st)
+        # 8. Regression
+        prediction = self.regression_layer(data_st)  # [B, output_len, N, 1]
 
         return prediction
