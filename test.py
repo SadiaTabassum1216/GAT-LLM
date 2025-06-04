@@ -53,16 +53,19 @@ def main():
             "path": "data/PEMS07",
             "num_nodes": 883,
             "adj_path": "data/adj/adj_PEMS07_gs.npy",
+            "input_dim": 1,
         },
         "PEMS08": {
             "path": "data/PEMS08",
             "num_nodes": 170,
             "adj_path": "data/adj/adj_PEMS08_gs.npy",
+            "input_dim": 1,
         },
         "PEMS08_36": {
             "path": "data/PEMS08_36",
             "num_nodes": 170,
             "adj_path": "data/adj/adj_PEMS08_gs.npy",
+            "input_dim": 1,
         },
         "PEMS08_48": {
             "path": "data/PEMS08_48",
@@ -73,21 +76,25 @@ def main():
             "path": "data/PEMS03",
             "num_nodes": 358,
             "adj_path": "data/adj/adj_PEMS03_gs.npy",
+            "input_dim": 1,
         },
         "PEMS04": {
             "path": "data/PEMS04",
             "num_nodes": 307,
             "adj_path": "data/adj/adj_PEMS04_gs.npy",
+            "input_dim": 1,
         },
         "PEMS04_36": {
             "path": "data/PEMS04_36",
             "num_nodes": 307,
             "adj_path": "data/adj/adj_PEMS04_gs.npy",
+            "input_dim": 1,
         },
         "PEMS04_48": {
             "path": "data/PEMS04_48",
             "num_nodes": 307,
             "adj_path": "data/adj/adj_PEMS04_gs.npy",
+            "input_dim": 1,
         },
         "bike_drop": {
             "path": "data/bike_drop",

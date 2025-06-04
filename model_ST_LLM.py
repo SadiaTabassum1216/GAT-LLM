@@ -89,8 +89,13 @@ class ST_LLM(nn.Module):
         tem_emb = self.Temb(history_data)  # [B, gpt_channel, N, 1]
 
         # 2. Node embedding from GAT: [N, gpt_channel]
-        node_emb = self.gat(self.node_emb.clone(), adj)
-        node_emb = node_emb.T.unsqueeze(0).repeat(batch_size, 1, 1).unsqueeze(-1)  # [B, gpt_channel, N, 1]
+        node_emb = self.gat(
+            self.node_emb.clone().unsqueeze(0).expand(batch_size, -1, -1),  # [B, N, gpt_channel_in]
+            adj
+        )  # [B, N, gpt_channel_out]
+        node_emb = node_emb.permute(0, 2, 1).unsqueeze(-1)  # [B, gpt_channel, N, 1]
+        # print("GAT output:", node_emb.shape)
+
 
         # 3. Prepare input for CNN
         input_data = history_data.permute(0, 2, 1, 3).contiguous()  # [B, N, C, T]

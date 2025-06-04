@@ -75,8 +75,8 @@ def plot_traffic_forecast_for_node(real_path: str, pred_path: str, node_idx: int
 
 
 # Example usage:
-plot_traffic_t1_forecast("taxi_drop_real.pt", "taxi_drop_pred.pt", sample_idx=0, num_nodes=266)
-# plot_traffic_forecast_for_node("taxi_drop_real.pt", "taxi_drop_pred.pt", node_idx=150, sample_idx=0, num_time_steps=12)
+# plot_traffic_t1_forecast("taxi_drop_real.pt", "taxi_drop_pred.pt", sample_idx=0, num_nodes=266)
+plot_traffic_forecast_for_node("taxi_drop_real.pt", "taxi_drop_pred.pt", node_idx=150, sample_idx=0, num_time_steps=12)
 
 
 
