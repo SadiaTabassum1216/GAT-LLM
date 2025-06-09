@@ -7,7 +7,8 @@ import util
 import os
 from util import *
 import random
-from model_ST_LLM import ST_LLM
+# from model_ST_LLM import ST_LLM
+from model_STLLM2 import ST_LLM
 from ranger21 import Ranger
 from tqdm import tqdm
 import pickle
@@ -24,7 +25,7 @@ parser.add_argument("--output_len", type=int, default=12)
 parser.add_argument("--batch_size", type=int, default=64)
 parser.add_argument("--lrate", type=float, default=1e-3)
 parser.add_argument("--llm_layer", type=int, default=1)
-parser.add_argument("--U", type=int, default=2)
+parser.add_argument("--U", type=int, default=1)
 parser.add_argument("--epochs", type=int, default=100)
 parser.add_argument("--print_every", type=int, default=50)
 parser.add_argument("--gpt_layers", type=int, default=6)

@@ -3,7 +3,8 @@ import argparse
 import torch
 import numpy as np
 import pickle
-from model_ST_LLM import ST_LLM
+# from model_ST_LLM import ST_LLM
+from model_STLLM2 import ST_LLM
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--device", type=str, default="cpu")

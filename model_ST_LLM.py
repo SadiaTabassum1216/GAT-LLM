@@ -5,6 +5,7 @@ from GAT import MultiHeadGAT
 from temporal_embedding import TemporalEmbedding
 from PFA import PFA
 
+
 class ST_LLM(nn.Module):
     def __init__(
         self,
@@ -58,7 +59,7 @@ class ST_LLM(nn.Module):
             out_features=gpt_channel // 4,  # so total output dim = gpt_channel
             dropout=0.1,
             alpha=0.2,
-            merge='concat'
+            merge="concat",
         )
 
         self.start_conv = nn.Conv2d(
@@ -81,7 +82,6 @@ class ST_LLM(nn.Module):
     def param_num(self):
         return sum([param.nelement() for param in self.parameters()])
 
-
     def forward(self, history_data, adj):
         batch_size, inputdim, num_nodes, input_len = history_data.shape
 
@@ -90,16 +90,19 @@ class ST_LLM(nn.Module):
 
         # 2. Node embedding from GAT: [N, gpt_channel]
         node_emb = self.gat(
-            self.node_emb.clone().unsqueeze(0).expand(batch_size, -1, -1),  # [B, N, gpt_channel_in]
-            adj
+            self.node_emb.clone()
+            .unsqueeze(0)
+            .expand(batch_size, -1, -1),  # [B, N, gpt_channel_in]
+            adj,
         )  # [B, N, gpt_channel_out]
         node_emb = node_emb.permute(0, 2, 1).unsqueeze(-1)  # [B, gpt_channel, N, 1]
         # print("GAT output:", node_emb.shape)
 
-
         # 3. Prepare input for CNN
         input_data = history_data.permute(0, 2, 1, 3).contiguous()  # [B, N, C, T]
-        input_data = input_data.view(batch_size, num_nodes, -1).transpose(1, 2).unsqueeze(-1)  # [B, C*T, N, 1]
+        input_data = (
+            input_data.view(batch_size, num_nodes, -1).transpose(1, 2).unsqueeze(-1)
+        )  # [B, C*T, N, 1]
         input_data = self.start_conv(input_data)  # [B, gpt_channel, N, 1]
 
         # 4. Assert same shape
@@ -108,7 +111,9 @@ class ST_LLM(nn.Module):
         ), f"Mismatch in num_nodes dimension: input_data={input_data.shape}, tem_emb={tem_emb.shape}, node_emb={node_emb.shape}"
 
         # 5. Fusion
-        data_st = torch.cat([input_data, tem_emb, node_emb], dim=1)  # [B, 3*gpt_channel, N, 1]
+        data_st = torch.cat(
+            [input_data, tem_emb, node_emb], dim=1
+        )  # [B, 3*gpt_channel, N, 1]
         data_st = self.feature_fusion(data_st)  # [B, 768, N, 1]
 
         # 6. GPT: [B, 768, N, 1] → [B, N, 768]
