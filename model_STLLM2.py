@@ -14,7 +14,7 @@ class ST_LLM(nn.Module):
         input_len=12,
         output_len=12,
         llm_layer=6,
-        U=1,
+        U=2,
         device="cpu",
     ):
         super().__init__()
@@ -43,6 +43,10 @@ class ST_LLM(nn.Module):
         to_gpt_channel = 768
 
         self.Temb = TemporalEmbedding(time, gpt_channel)
+        # Learnable positional embedding for time steps
+        self.learned_pe = nn.Parameter(torch.empty(self.input_len, gpt_channel))
+        nn.init.xavier_uniform_(self.learned_pe)
+
 
         # Node embedding
         self.node_emb = nn.Parameter(torch.empty(self.num_nodes, gpt_channel))
@@ -103,6 +107,13 @@ class ST_LLM(nn.Module):
             input_data.view(batch_size, num_nodes, -1).transpose(1, 2).unsqueeze(-1)
         )  # [B, C*T, N, 1]
         input_data = self.start_conv(input_data)  # [B, gpt_channel, N, 1]
+        
+
+        # Add learnable positional embedding (over input_len time steps)
+        # learned_pe: [T, C] → [1, C, 1, T]
+        pe = self.learned_pe.permute(1, 0).unsqueeze(0).unsqueeze(2)  # [1, C, 1, T]
+        input_data = input_data + pe[:, :, :, -1:]  # broadcast to [B, C, N, 1]
+
 
         # 4. Assert same shape
         assert (
