@@ -18,10 +18,6 @@ class ST_LLM(nn.Module):
         device="cpu",
     ):
         super().__init__()
-        self.attn_implementation = "eager"
-
-        # input length = last 12 time steps, output length= next 12 time steps
-
         self.num_nodes = num_nodes
         self.node_dim = channels
         self.input_len = input_len
@@ -31,10 +27,9 @@ class ST_LLM(nn.Module):
         self.U = U
         self.device = device
 
-        # this is chosen according to the dataset
-        if num_nodes == 170 or num_nodes == 307 or num_nodes == 883:
+        if num_nodes in [170, 307, 883]:
             time = 288
-        elif num_nodes == 250 or num_nodes == 266:
+        elif num_nodes in [250, 266]:
             time = 48
         else:
             time = 288
@@ -43,97 +38,92 @@ class ST_LLM(nn.Module):
         to_gpt_channel = 768
 
         self.Temb = TemporalEmbedding(time, gpt_channel)
-        # Learnable positional embedding for time steps
-        self.learned_pe = nn.Parameter(torch.empty(self.input_len, gpt_channel))
+
+        self.learned_pe = nn.Parameter(torch.empty(self.input_len, gpt_channel))  # [T, C]
         nn.init.xavier_uniform_(self.learned_pe)
 
-
-        # Node embedding
-        self.node_emb = nn.Parameter(torch.empty(self.num_nodes, gpt_channel))
+        self.node_emb = nn.Parameter(torch.empty(self.num_nodes, gpt_channel))  # [N, C]
         nn.init.xavier_uniform_(self.node_emb)
-        print(f"node_emb: {self.node_emb.shape}")  # Should be [num_nodes, gpt_channel]
 
-        # GCN layer for graph-aware node embeddings
-        # self.gcn = GraphConvolution(gpt_channel, gpt_channel)
-        # self.gat = GraphAttention(gpt_channel, gpt_channel)
         self.gat = MultiHeadGAT(
             n_heads=2,
             in_features=gpt_channel,
-            out_features=gpt_channel // 2,  # so total output dim = gpt_channel
+            out_features=gpt_channel // 2,
             dropout=0.1,
             alpha=0.2,
             merge="concat",
         )
 
-        self.start_conv = nn.Conv2d(
-            self.input_dim * self.input_len, gpt_channel, kernel_size=(1, 1)
+        # 🔧 Project 3-channel input (C) to gpt_channel
+        self.input_projection = nn.Conv2d(
+            in_channels=self.input_dim, out_channels=gpt_channel, kernel_size=(1, 1)
         )
-
-        # embedding layer
-        self.gpt = PFA(device=self.device, gpt_layers=self.llm_layer, U=self.U)
 
         self.feature_fusion = nn.Conv2d(
             gpt_channel * 3, to_gpt_channel, kernel_size=(1, 1)
         )
 
-        # regression
+        self.gpt = PFA(device=self.device, gpt_layers=self.llm_layer, U=self.U)
+        self.norm = nn.LayerNorm(to_gpt_channel)
+        self.residual = True
+
         self.regression_layer = nn.Conv2d(
-            gpt_channel * 3, self.output_len, kernel_size=(1, 1)
+            to_gpt_channel, 1, kernel_size=(1, 1)  # predict one step at a time
         )
 
-    # return the total parameters of model
     def param_num(self):
-        return sum([param.nelement() for param in self.parameters()])
+        return sum([p.numel() for p in self.parameters() if p.requires_grad])
 
     def forward(self, history_data, adj):
-        batch_size, inputdim, num_nodes, input_len = history_data.shape
+        B, C, N, T = history_data.shape
+        assert T == self.input_len and N == self.num_nodes and C == self.input_dim
 
-        # 1. Temporal embeddings
-        tem_emb = self.Temb(history_data)  # [B, gpt_channel, N, 1]
+        predictions = []
+        current_input = history_data.clone()  # [B, C, N, T]
 
-        # 2. Node embedding from GAT: [N, gpt_channel]
+        # ✅ Compute node embeddings via GAT just once
         node_emb = self.gat(
-            self.node_emb.clone()
-            .unsqueeze(0)
-            .expand(batch_size, -1, -1),  # [B, N, gpt_channel_in]
-            adj,
-        )  # [B, N, gpt_channel_out]
+            self.node_emb.unsqueeze(0).expand(B, -1, -1), adj
+        )  # [B, N, gpt_channel]
         node_emb = node_emb.permute(0, 2, 1).unsqueeze(-1)  # [B, gpt_channel, N, 1]
-        # print("GAT output:", node_emb.shape)
 
-        # 3. Prepare input for CNN
-        input_data = history_data.permute(0, 2, 1, 3).contiguous()  # [B, N, C, T]
-        input_data = (
-            input_data.view(batch_size, num_nodes, -1).transpose(1, 2).unsqueeze(-1)
-        )  # [B, C*T, N, 1]
-        input_data = self.start_conv(input_data)  # [B, gpt_channel, N, 1]
-        
+        for step in range(self.output_len):
+            # --- Temporal embedding ---
+            tem_emb = self.Temb(current_input)  # [B, gpt_channel, N, 1]
 
-        # Add learnable positional embedding (over input_len time steps)
-        # learned_pe: [T, C] → [1, C, 1, T]
-        pe = self.learned_pe.permute(1, 0).unsqueeze(0).unsqueeze(2)  # [1, C, 1, T]
-        input_data = input_data + pe[:, :, :, -1:]  # broadcast to [B, C, N, 1]
+            # --- Project input ---
+            x = current_input.permute(0, 2, 1, 3)  # [B, N, C, T]
+            x = x.reshape(B * N, C, T, 1)  # [B*N, C, T, 1]
+            x = self.input_projection(x)  # [B*N, gpt_channel, T, 1]
+            x = x.squeeze(-1).reshape(B, N, -1, T).permute(0, 2, 1, 3)  # [B, gpt_channel, N, T]
+
+            # --- Add positional embedding over time ---
+            pe = self.learned_pe.T.unsqueeze(0).unsqueeze(2)  # [1, gpt_channel, 1, T]
+            input_seq = x + pe  # [B, gpt_channel, N, T]
+
+            # Use only last step’s feature for fusion (can experiment with mean)
+            input_seq = input_seq[:, :, :, -1:]  # [B, gpt_channel, N, 1]
+
+            # --- Feature fusion ---
+            data_st = torch.cat([input_seq, tem_emb, node_emb], dim=1)  # [B, 3*gpt_channel, N, 1]
+            data_st = self.feature_fusion(data_st)  # [B, 768, N, 1]
+
+            # --- GPT ---
+            data_st = data_st.permute(0, 2, 1, 3).squeeze(-1)  # [B, N, 768]
+            gpt_input = self.norm(data_st)
+            gpt_out = self.gpt(gpt_input)
+            if self.residual:
+                gpt_out = gpt_out + gpt_input
+
+            # --- Regression ---
+            gpt_out = gpt_out.permute(0, 2, 1).unsqueeze(-1)  # [B, 768, N, 1]
+            pred = self.regression_layer(gpt_out)  # [B, 1, N, 1]
+            predictions.append(pred)
+
+            # --- Autoregressive update (repeat pred to match C=3) ---
+            pred_repeated = pred.repeat(1, self.input_dim, 1, 1)  # [B, C, N, 1]
+            current_input = torch.cat([current_input[:, :, :, 1:], pred_repeated], dim=-1)  # [B, C, N, T]
+
+        return torch.cat(predictions, dim=1)  # [B, output_len, N, 1]
 
 
-        # 4. Assert same shape
-        assert (
-            input_data.shape[2] == tem_emb.shape[2] == node_emb.shape[2]
-        ), f"Mismatch in num_nodes dimension: input_data={input_data.shape}, tem_emb={tem_emb.shape}, node_emb={node_emb.shape}"
-
-        # 5. Fusion
-        data_st = torch.cat(
-            [input_data, tem_emb, node_emb], dim=1
-        )  # [B, 3*gpt_channel, N, 1]
-        data_st = self.feature_fusion(data_st)  # [B, 768, N, 1]
-
-        # 6. GPT: [B, 768, N, 1] → [B, N, 768]
-        data_st = data_st.permute(0, 2, 1, 3).squeeze(-1)
-        data_st = self.gpt(data_st)  # [B, N, 768]
-
-        # 7. Back to conv
-        data_st = data_st.permute(0, 2, 1).unsqueeze(-1)  # [B, 768, N, 1]
-
-        # 8. Regression
-        prediction = self.regression_layer(data_st)  # [B, output_len, N, 1]
-
-        return prediction

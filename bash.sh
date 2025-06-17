@@ -5,6 +5,8 @@
 # conda activate stllm
 # pip install -r requirements.txt
 
+# python -m torch.utils.bottleneck train.py --data taxi_drop > bottleneck_profile.txt
+
 # python train.py --data taxi_drop > taxi_drop_train_with_gat.log
 # python train.py --data taxi_drop > taxi_drop_train_with_gat.log --resume ./logs/xtaxi_drop/checkpoint_epoch_10.pth
 # python test.py --data taxi_drop --checkpoint ./logs/xtaxi_drop/best_model.pth > taxi_drop_test_with_gat.log

@@ -85,6 +85,8 @@ def load_dataset(dataset_dir, batch_size, valid_batch_size=None, test_batch_size
     data["val_loader"] = DataLoader(data["x_val"], data["y_val"], valid_batch_size)
     data["test_loader"] = DataLoader(data["x_test"], data["y_test"], test_batch_size)
     data["scaler"] = scaler
+    print("Training samples: ", data["x_train"].shape[0])
+    print("Iters per epoch: ", data["train_loader"].num_batch)
 
     return data
 

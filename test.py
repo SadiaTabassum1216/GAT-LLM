@@ -15,7 +15,7 @@ parser.add_argument("--num_nodes", type=int, default=170)
 parser.add_argument("--llm_layer", type=int, default=1)
 parser.add_argument("--input_len", type=int, default=12)
 parser.add_argument("--output_len", type=int, default=48)
-parser.add_argument("--batch_size", type=int, default=64)
+parser.add_argument("--batch_size", type=int, default=8)    #64
 parser.add_argument("--learning_rate", type=float, default=0.001, help="learning rate")
 parser.add_argument("--dropout", type=float, default=0.1, help="dropout rate")
 parser.add_argument(
