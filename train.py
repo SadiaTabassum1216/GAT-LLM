@@ -7,10 +7,9 @@ import util
 import os
 from util import *
 import random
-import torch.utils.bottleneck as bottleneck
 
-# from model_ST_LLM import ST_LLM
-from model_STLLM2 import ST_LLM
+from model_ST_LLM import ST_LLM
+# from model_STLLM2 import ST_LLM
 from ranger21 import Ranger
 from tqdm import tqdm
 import pickle
@@ -20,9 +19,7 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:21"
 parser = argparse.ArgumentParser()
 parser.add_argument("--device", type=str, default="cpu")
 parser.add_argument("--data", type=str, default="taxi_pick")
-parser.add_argument(
-    "--input_dim", type=int, default=3
-)  # 3 for bike and taxi, 1 for PEMS07
+parser.add_argument("--input_dim", type=int, default=3)  # 3 for bike and taxi, 1 for PEMS07
 parser.add_argument("--num_nodes", type=int, default=250)
 parser.add_argument("--input_len", type=int, default=12)
 parser.add_argument("--output_len", type=int, default=12)
@@ -37,7 +34,6 @@ parser.add_argument("--wdecay", type=float, default=0.0001)
 parser.add_argument("--save", type=str, default="./logs/x")
 parser.add_argument("--es_patience", type=int, default=100)
 parser.add_argument("--resume", type=str, default="", help="Path to checkpoint")
-parser.add_argument("--bottleneck", action="store_true", help="Run one quick epoch for profiling")
 
 args = parser.parse_args()
 
@@ -89,10 +85,11 @@ class trainer:
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.clip)
         self.optimizer.step()
 
+        mae = util.MAE_torch(predict, real, 0.0).item()
         mape = util.MAPE_torch(predict, real, 0.0).item()
         rmse = util.RMSE_torch(predict, real, 0.0).item()
         wmape = util.WMAPE_torch(predict, real, 0.0).item()
-        return loss.item(), mape, rmse, wmape
+        return loss.item(), mae, mape, rmse, wmape
 
 
     def eval(self, input, real_val):
@@ -102,10 +99,11 @@ class trainer:
             predict = self.scaler.inverse_transform(output)
             real = real_val  # already [B, output_len, N, 1]
             loss = self.loss(predict, real, 0.0)
+            mae = util.MAE_torch(predict, real, 0.0).item()
             mape = util.MAPE_torch(predict, real, 0.0).item()
             rmse = util.RMSE_torch(predict, real, 0.0).item()
             wmape = util.WMAPE_torch(predict, real, 0.0).item()
-        return loss.item(), mape, rmse, wmape
+        return loss.item(), mae, mape, rmse, wmape
 
 
 def seed_it(seed):
@@ -201,10 +199,11 @@ def main():
 
     print("start training...", flush=True)
 
-    total_epochs = 1 if args.bottleneck else args.epochs
+    total_epochs = args.epochs
+
     for i in range(start_epoch, total_epochs + 1):
     # for i in range(start_epoch, args.epochs + 1):
-        train_loss, train_mape, train_rmse, train_wmape = [], [], [], []
+        train_loss, train_mae, train_mape, train_rmse, train_wmape = [], [], [], [], []
         t1 = time.time()
 
         for iter, (x, y) in enumerate(
@@ -217,12 +216,13 @@ def main():
             metrics = engine.train(trainx, real)
 
             train_loss.append(metrics[0])
-            train_mape.append(metrics[1])
-            train_rmse.append(metrics[2])
-            train_wmape.append(metrics[3])
+            train_mae.append(metrics[1])
+            train_mape.append(metrics[2])
+            train_rmse.append(metrics[3])
+            train_wmape.append(metrics[4])
             if iter % args.print_every == 0:
                 print(
-                    f"\n  Iter {iter:03d} | Loss: {metrics[0]:.4f}, RMSE: {metrics[2]:.4f}, MAPE: {metrics[1]:.4f}, WMAPE: {metrics[3]:.4f}"
+                    f"\n  Iter {iter:03d} | Loss: {metrics[0]:.4f}, MAE: {metrics[1]:.4f}, MAPE: {metrics[2]:.4f}, RMSE: {metrics[3]:.4f}, WMAPE: {metrics[4]:.4f}"
                 )
 
         t2 = time.time()
