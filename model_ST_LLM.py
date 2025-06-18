@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 from GCN import GraphConvolution
-from GAT import MultiHeadGAT
+# from GAT import MultiHeadGAT
 from temporal_embedding import TemporalEmbedding
 from PFA import PFA
 
@@ -51,16 +51,16 @@ class ST_LLM(nn.Module):
         print(f"node_emb: {self.node_emb.shape}")  # Should be [num_nodes, gpt_channel]
 
         # GCN layer for graph-aware node embeddings
-        # self.gcn = GraphConvolution(gpt_channel, gpt_channel)
+        self.gcn = GraphConvolution(gpt_channel, gpt_channel)
         # self.gat = GraphAttention(gpt_channel, gpt_channel)
-        self.gat = MultiHeadGAT(
-            n_heads=4,
-            in_features=gpt_channel,
-            out_features=gpt_channel // 4,  # so total output dim = gpt_channel
-            dropout=0.1,
-            alpha=0.2,
-            merge="concat",
-        )
+        # self.gat = MultiHeadGAT(
+        #     n_heads=4,
+        #     in_features=gpt_channel,
+        #     out_features=gpt_channel // 4,  # so total output dim = gpt_channel
+        #     dropout=0.1,
+        #     alpha=0.2,
+        #     merge="concat",
+        # )
 
         self.start_conv = nn.Conv2d(
             self.input_dim * self.input_len, gpt_channel, kernel_size=(1, 1)
@@ -89,13 +89,9 @@ class ST_LLM(nn.Module):
         tem_emb = self.Temb(history_data)  # [B, gpt_channel, N, 1]
 
         # 2. Node embedding from GAT: [N, gpt_channel]
-        node_emb = self.gat(
-            self.node_emb.clone()
-            .unsqueeze(0)
-            .expand(batch_size, -1, -1),  # [B, N, gpt_channel_in]
-            adj,
-        )  # [B, N, gpt_channel_out]
-        node_emb = node_emb.permute(0, 2, 1).unsqueeze(-1)  # [B, gpt_channel, N, 1]
+        node_emb = self.gcn(self.node_emb.clone(), adj)  # [N, gpt_channel]
+        node_emb = node_emb.T.unsqueeze(0).expand(batch_size, -1, -1).unsqueeze(-1)  # [B, gpt_channel, N, 1]
+
         # print("GAT output:", node_emb.shape)
 
         # 3. Prepare input for CNN
