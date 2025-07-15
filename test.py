@@ -3,8 +3,8 @@ import argparse
 import torch
 import numpy as np
 import pickle
-from model_ST_LLM import ST_LLM
-# from model_STLLM2 import ST_LLM
+# from model_ST_LLM import ST_LLM
+from model_STLLM2 import ST_LLM
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--device", type=str, default="cpu")
@@ -15,7 +15,7 @@ parser.add_argument("--num_nodes", type=int, default=170)
 parser.add_argument("--llm_layer", type=int, default=1)
 parser.add_argument("--input_len", type=int, default=12)
 parser.add_argument("--output_len", type=int, default=48)
-parser.add_argument("--batch_size", type=int, default=8)    #64
+parser.add_argument("--batch_size", type=int, default=8)
 parser.add_argument("--learning_rate", type=float, default=0.001, help="learning rate")
 parser.add_argument("--dropout", type=float, default=0.1, help="dropout rate")
 parser.add_argument(
@@ -29,7 +29,7 @@ args = parser.parse_args()
 def normalize_adj(adj):
     degree = torch.sum(adj, dim=1)
     d_inv_sqrt = torch.pow(degree, -0.5)
-    d_inv_sqrt[torch.isinf(d_inv_sqrt)] = 0.
+    d_inv_sqrt[torch.isinf(d_inv_sqrt)] = 0.0
     D_inv_sqrt = torch.diag(d_inv_sqrt)
     return torch.mm(torch.mm(D_inv_sqrt, adj), D_inv_sqrt)
 

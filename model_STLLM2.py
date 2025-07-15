@@ -81,7 +81,7 @@ class ST_LLM(nn.Module):
         predictions = []
         current_input = history_data.clone()  # [B, C, N, T]
 
-        # ✅ Compute node embeddings via GAT just once
+        # Compute node embeddings via GAT just once
         node_emb = self.gat(
             self.node_emb.unsqueeze(0).expand(B, -1, -1), adj
         )  # [B, N, gpt_channel]

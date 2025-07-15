@@ -8,8 +8,8 @@ import os
 from util import *
 import random
 
-from model_ST_LLM import ST_LLM
-# from model_STLLM2 import ST_LLM
+# from model_ST_LLM import ST_LLM
+from model_STLLM2 import ST_LLM
 from ranger21 import Ranger
 from tqdm import tqdm
 import pickle
@@ -23,14 +23,14 @@ parser.add_argument("--input_dim", type=int, default=3)  # 3 for bike and taxi, 
 parser.add_argument("--num_nodes", type=int, default=250)
 parser.add_argument("--input_len", type=int, default=12)
 parser.add_argument("--output_len", type=int, default=12)
-parser.add_argument("--batch_size", type=int, default=64)
-parser.add_argument("--lrate", type=float, default=1e-3)
-parser.add_argument("--llm_layer", type=int, default=1)
-parser.add_argument("--U", type=int, default=2)
-parser.add_argument("--epochs", type=int, default=100)
+parser.add_argument("--batch_size", type=int, default=8)   # 64
+parser.add_argument("--lrate", type=float, default=1e-4)    #1e-3
+parser.add_argument("--llm_layer", type=int, default=3) #1
+parser.add_argument("--U", type=int, default=2) #1
+parser.add_argument("--epochs", type=int, default=300)  #100
 parser.add_argument("--print_every", type=int, default=50)
 parser.add_argument("--gpt_layers", type=int, default=6)
-parser.add_argument("--wdecay", type=float, default=0.0001)
+parser.add_argument("--wdecay", type=float, default=3e-3) #0.0001
 # parser.add_argument("--dropout", type=float, default=0.1)
 # parser.add_argument("--hidden_dim", type=int, default=128)
 parser.add_argument("--save", type=str, default="./logs/x")
@@ -69,7 +69,7 @@ class trainer:
         self.optimizer = Ranger(self.model.parameters(), lr=lrate, weight_decay=wdecay)
         self.loss = util.MAE_torch
         self.scaler = scaler
-        self.clip = 5
+        self.clip = 7  # Gradient clipping value
         self.adj = adj
         print("The number of parameters: {}".format(self.model.param_num()))
         print("node_emb shape at init:", self.model.node_emb.shape)

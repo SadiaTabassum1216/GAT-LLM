@@ -9,6 +9,8 @@ from util import load_dataset, MAE_torch, MAPE_torch, RMSE_torch, WMAPE_torch
 from model_ST_LLM import ST_LLM
 from ranger21 import Ranger
 import torch.optim as optim
+import csv
+
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 DATA = "taxi_drop"  # change if needed
@@ -35,6 +37,22 @@ def normalize_adj(adj):
     d_inv_sqrt[torch.isinf(d_inv_sqrt)] = 0.0
     D_inv_sqrt = torch.diag(d_inv_sqrt)
     return torch.mm(torch.mm(D_inv_sqrt, adj), D_inv_sqrt)
+
+def log_trial_csv(trial_number, params, value):
+    with open(CSV_LOG_FILE, mode="a", newline="") as file:
+        writer = csv.writer(file)
+        writer.writerow([
+            trial_number,
+            params.get("lrate"),
+            params.get("wdecay"),
+            params.get("optimizer"),
+            params.get("clip"),
+            params.get("llm_layer"),
+            params.get("U"),
+            params.get("batch_size"),
+            value
+        ])
+
 
 def train_and_evaluate(trial):
     # Optimization Hyperparameters
@@ -106,11 +124,25 @@ def train_and_evaluate(trial):
         best_loss = min(best_loss, loss.item())
         break  # one batch per trial for fast tuning
 
+    log_trial_csv(trial.number, trial.params, best_loss)
+
     return best_loss  # minimize this
 
 
 if __name__ == "__main__":
     seed_it(42)
+    
+    CSV_LOG_FILE = "optuna_trials.csv"
+
+    # Create the CSV file with header if it doesn't exist
+    if not os.path.exists(CSV_LOG_FILE):
+        with open(CSV_LOG_FILE, mode="w", newline="") as file:
+            writer = csv.writer(file)
+            writer.writerow([
+                "trial_number", "lrate", "wdecay", "optimizer", "clip",
+                "llm_layer", "U", "batch_size", "loss"
+            ])
+
     study = optuna.create_study(direction="minimize", study_name="stllm_hparam_tuning")
     study.optimize(train_and_evaluate, n_trials=100, timeout=3600)
 
